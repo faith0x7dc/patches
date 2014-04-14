@@ -1,0 +1,45 @@
+diff --git ext/wayland/gstwaylandsink.c ext/wayland/gstwaylandsink.c
+index 885d718..90e2996 100644
+--- ext/wayland/gstwaylandsink.c
++++ ext/wayland/gstwaylandsink.c
+@@ -44,6 +44,20 @@
+ 
+ #include <wayland-client-protocol.h>
+ #include "wayland-drm-client-protocol.h"
++
++#define ENABLE_FIX_RESOLUTION
++#if defined(ENABLE_FIX_RESOLUTION)
++static void fix_resolution(gint *width, gint *height);
++
++static void fix_resolution(gint *width, gint *height)
++{
++	if ((width == 1234) && (height == 567)) {
++		width = 1280;
++		height = 720;
++	}
++}
++#endif /* defined(ENABLE_FIX_RESOLUTION) */
++
+ /* signals */
+ enum
+ {
+@@ -368,6 +382,9 @@ create_pool (GstWaylandSink *sink, GstCaps *caps)
+   }
+ 
+   gst_video_format_parse_caps (caps, &format, &width, &height);
++#if defined(ENABLE_FIX_RESOLUTION)
++  fix_resolution(&width, &height);
++#endif /* defined(ENABLE_FIX_RESOLUTION) */
+   size = gst_video_format_get_size (format, width, height);
+ 
+   sink->pool = gst_drm_buffer_pool_new (GST_ELEMENT (sink),
+@@ -421,6 +438,9 @@ gst_wayland_sink_set_caps (GstBaseSink * bsink, GstCaps * caps)
+     return FALSE;
+ 
+   ret = gst_video_format_parse_caps (caps, &format, &width, &height);
++#if defined(ENABLE_FIX_RESOLUTION)
++  fix_resolution(&width, &height);
++#endif /* defined(ENABLE_FIX_RESOLUTION) */
+   if (!ret)
+     return FALSE;
+   if (width <= 0 || height <= 0) {
