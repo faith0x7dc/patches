@@ -1,0 +1,159 @@
+diff --git ivi-shell/hmi-controller-homescreen.c ivi-shell/hmi-controller-homescreen.c
+index 0ea230e..c555181 100644
+--- ivi-shell/hmi-controller-homescreen.c
++++ ivi-shell/hmi-controller-homescreen.c
+@@ -180,6 +180,8 @@ mem_alloc(size_t size, char* file, int32_t line)
+ #define MEM_ALLOC(s) mem_alloc((s),__FILE__,__LINE__)
+ #define ARRAY_LENGTH(a) (sizeof (a) / sizeof (a)[0])
+ 
++#define SCREEN_MAX  2
++
+ /*****************************************************************************
+  *  Event Handler
+  ****************************************************************************/
+@@ -1058,10 +1060,10 @@ create_ivisurfaceFromColor(struct wlContextStruct *p_wlCtx,
+  */
+ static void
+ create_background(struct wlContextStruct *p_wlCtx, const uint32_t id_surface,
+-                  const char* imageFile)
++                  const char* imageFile, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
+ {
+     create_ivisurfaceFromFile(p_wlCtx, id_surface, imageFile);
+-    ivi_hmi_controller_set_background(p_wlCtx->cmm.hmiCtrl, id_surface);
++    ivi_hmi_controller_set_background_with_rect(p_wlCtx->cmm.hmiCtrl, id_surface, x, y, width, height);
+ }
+ 
+ static void
+@@ -1346,7 +1348,7 @@ static void*
+ client_thread(void *p_ret)
+ {
+     struct wlContextCommon wlCtxCommon;
+-    struct wlContextStruct wlCtx_BackGround;
++    struct wlContextStruct wlCtx_BackGround[SCREEN_MAX];
+     struct wlContextStruct wlCtx_Panel;
+     struct wlContextStruct wlCtx_Button_1;
+     struct wlContextStruct wlCtx_Button_2;
+@@ -1355,9 +1357,10 @@ client_thread(void *p_ret)
+     struct wlContextStruct wlCtx_HomeButton;
+     struct wlContextStruct wlCtx_WorkSpaceBackGround;
+     struct wl_list         launcher_wlCtxList;
++    int i;
+ 
+     memset(&wlCtxCommon, 0x00, sizeof(wlCtxCommon));
+-    memset(&wlCtx_BackGround, 0x00, sizeof(wlCtx_BackGround));
++    memset(&wlCtx_BackGround[0], 0x00, sizeof(wlCtx_BackGround));
+     memset(&wlCtx_Panel,      0x00, sizeof(wlCtx_Panel));
+     memset(&wlCtx_Button_1,   0x00, sizeof(wlCtx_Button_1));
+     memset(&wlCtx_Button_2,   0x00, sizeof(wlCtx_Button_2));
+@@ -1397,7 +1400,8 @@ client_thread(void *p_ret)
+         wlCtxCommon.current_cursor = CURSOR_LEFT_PTR;
+     }
+ 
+-    wlCtx_BackGround.cmm = wlCtxCommon;
++    for (i = 0; i < SCREEN_MAX; i++)
++        wlCtx_BackGround[i].cmm = wlCtxCommon;
+     wlCtx_Panel.cmm      = wlCtxCommon;
+     wlCtx_Button_1.cmm   = wlCtxCommon;
+     wlCtx_Button_2.cmm   = wlCtxCommon;
+@@ -1407,8 +1411,11 @@ client_thread(void *p_ret)
+     wlCtx_WorkSpaceBackGround.cmm = wlCtxCommon;
+ 
+     /* create desktop widgets */
+-    create_background(&wlCtx_BackGround, hmi_setting->background.id,
+-                      hmi_setting->background.filePath);
++    create_background(&wlCtx_BackGround[0], hmi_setting->background.id,
++                      hmi_setting->background.filePath, 0, 0, 1280, 720);
++
++    create_background(&wlCtx_BackGround[1], 1010,
++                      hmi_setting->background.filePath, 1280, 0, 1920, 1080);
+ 
+     create_panel(&wlCtx_Panel, hmi_setting->panel.id,
+                  hmi_setting->panel.filePath);
+diff --git ivi-shell/hmi-controller.c ivi-shell/hmi-controller.c
+index 3cfb19b..261f201 100644
+--- ivi-shell/hmi-controller.c
++++ ivi-shell/hmi-controller.c
+@@ -835,7 +835,11 @@ hmi_controller_create(struct weston_compositor *ec)
+ 
+     iviscrn = ppScreen[0];
+ 
++#if 1
++    weston_layout_getScreenResolution(ppScreen[screen_length - 1], &screen_width, &screen_height);
++#else
+     weston_layout_getScreenResolution(iviscrn, &screen_width, &screen_height);
++#endif
+     assert(!ret);
+ 
+     /* init base layer*/
+@@ -908,6 +912,7 @@ hmi_controller_create(struct weston_compositor *ec)
+ /**
+  * Implementations of ivi-hmi-controller.xml
+  */
++static void ivi_hmi_controller_set_background_with_rect(struct wl_client *client, struct wl_resource *resource, uint32_t id_surface, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+ 
+ /**
+  * A surface drawing background is identified by id_surface.
+@@ -923,12 +928,22 @@ ivi_hmi_controller_set_background(struct wl_client *client,
+ 
+ {
+     struct hmi_controller *hmi_ctrl = wl_resource_get_user_data(resource);
++
++	ivi_hmi_controller_set_background_with_rect(client, resource, id_surface,
++		hmi_ctrl->application_layer.x, hmi_ctrl->application_layer.y,
++		hmi_ctrl->application_layer.width, hmi_ctrl->application_layer.height);
++}
++
++static void
++ivi_hmi_controller_set_background_with_rect(struct wl_client *client,
++                                  struct wl_resource *resource,
++                                  uint32_t id_surface,
++                                  uint32_t x, uint32_t y,
++                                  uint32_t width, uint32_t height)
++{
++    struct hmi_controller *hmi_ctrl = wl_resource_get_user_data(resource);
+     struct weston_layout_surface *ivisurf = NULL;
+     struct weston_layout_layer   *ivilayer = hmi_ctrl->base_layer.ivilayer;
+-    const uint32_t dstx = hmi_ctrl->application_layer.x;
+-    const uint32_t dsty = hmi_ctrl->application_layer.y;
+-    const uint32_t width  = hmi_ctrl->application_layer.width;
+-    const uint32_t height = hmi_ctrl->application_layer.height;
+     uint32_t ret = 0;
+ 
+     uint32_t *add_surface_id = wl_array_add(&hmi_ctrl->ui_widgets,
+@@ -942,7 +957,7 @@ ivi_hmi_controller_set_background(struct wl_client *client,
+     assert(!ret);
+ 
+     ret = weston_layout_surfaceSetDestinationRectangle(ivisurf,
+-                                    dstx, dsty, width, height);
++                                    x, y, width, height);
+     assert(!ret);
+ 
+     ret = weston_layout_surfaceSetVisibility(ivisurf, 1);
+@@ -1718,6 +1733,7 @@ ivi_hmi_controller_home(struct wl_client *client,
+  */
+ static const struct ivi_hmi_controller_interface ivi_hmi_controller_implementation = {
+     ivi_hmi_controller_set_background,
++    ivi_hmi_controller_set_background_with_rect,
+     ivi_hmi_controller_set_panel,
+     ivi_hmi_controller_set_button,
+     ivi_hmi_controller_set_home_button,
+diff --git protocol/ivi-hmi-controller.xml protocol/ivi-hmi-controller.xml
+index 04e22f4..c9d9c41 100644
+--- protocol/ivi-hmi-controller.xml
++++ protocol/ivi-hmi-controller.xml
+@@ -34,6 +34,15 @@
+             <arg name="srf_id" type="uint"/>
+         </request>
+ 
++        <request name="set_background_with_rect">
++            <description summary="set surface drawing background by surface ID"/>
++            <arg name="srf_id" type="uint"/>
++            <arg name="x" type="uint"/>
++            <arg name="y" type="uint"/>
++            <arg name="width" type="uint"/>
++            <arg name="height" type="uint"/>
++        </request>
++
+         <request name="set_panel">
+             <description summary="set surface drawing panel by surface ID"/>
+             <arg name="srf_id" type="uint"/>
