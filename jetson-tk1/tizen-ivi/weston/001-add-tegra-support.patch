@@ -1,0 +1,233 @@
+diff --git configure.ac configure.ac
+index d7bb414..c46f4a5 100644
+--- configure.ac
++++ configure.ac
+@@ -512,6 +512,17 @@ fi
+ 
+ PKG_CHECK_MODULES(WAYLAND_SCANNER, wayland-scanner)
+ 
++### Tegra
++have_tegra=no
++AC_ARG_ENABLE(tegra, [ --disable-tegra], [enable_tegra=yes], [enable_tegra=no])
++AM_CONDITIONAL(ENABLE_EGL, test x$enable_tegra = xyes)
++if test x$enable_tegra = xyes; then
++    PKG_CHECK_MODULES(TEGRA, libdrm_tegra, [have_tegra=yes], [have_tegra=no])
++    if test "x$have_tegra" = "xyes"; then
++        AC_DEFINE([HAVE_TEGRA], [1], [Define if Tegra support is available.])
++    fi
++fi
++
+ AC_CONFIG_FILES([Makefile src/version.h src/weston.pc])
+ 
+ AM_CONDITIONAL([HAVE_GIT_REPO], [test -f $srcdir/.git/logs/HEAD])
+@@ -561,4 +572,6 @@ AC_MSG_RESULT([
+ 	libwebp Support			${have_webp}
+ 	libunwind Support		${have_libunwind}
+ 	VA H.264 encoding Support	${have_libva}
++
++	Tegra Support			${have_tegra}
+ ])
+diff --git packaging/weston.spec packaging/weston.spec
+index 999f8c9..34f4d39 100644
+--- packaging/weston.spec
++++ packaging/weston.spec
+@@ -1,6 +1,7 @@
+ %bcond_with wayland
+ %bcond_with mobile
+ %bcond_with rdp
++%bcond_with tegra
+ 
+ %if %{with mobile}
+ %define extra_config_options1 --disable-drm-compositor
+@@ -14,9 +15,13 @@
+ %define extra_config_options3 --enable-sys-uid
+ %endif
+ 
++%if %{with tegra}
++%define extra_config_options4 --enable-tegra
++%endif
++
+ Name:           weston
+ Version:        1.5.0
+-Release:        0
++Release:        2.1.z0.0
+ Summary:        Wayland Compositor Infrastructure
+ License:        MIT
+ Group:          Graphics & UI Framework/Wayland Window System
+@@ -117,7 +122,8 @@ cp %{SOURCE1001} .
+          --disable-rpi-compositor \
+          %{?extra_config_options1:%extra_config_options1} \
+          %{?extra_config_options2:%extra_config_options2} \
+-         %{?extra_config_options3:%extra_config_options3}
++         %{?extra_config_options3:%extra_config_options3} \
++         %{?extra_config_options4:%extra_config_options4}
+ 
+ make %{?_smp_mflags}
+ 
+diff --git src/compositor-drm.c src/compositor-drm.c
+index 3f7a444..c1fa968 100644
+--- src/compositor-drm.c
++++ src/compositor-drm.c
+@@ -51,6 +51,10 @@
+ #include "launcher-util.h"
+ #include "vaapi-recorder.h"
+ 
++#if defined(HAVE_TEGRA)
++#include <tegra_drm.h>
++#endif /* defined(HAVE_TEGRA) */
++
+ #ifndef DRM_CAP_TIMESTAMP_MONOTONIC
+ #define DRM_CAP_TIMESTAMP_MONOTONIC 0x6
+ #endif
+@@ -80,6 +84,7 @@ struct drm_compositor {
+ 		int fd;
+ 		char *filename;
+ 	} drm;
++	int gbm_fd;
+ 	struct gbm_device *gbm;
+ 	uint32_t *crtcs;
+ 	int num_crtcs;
+@@ -208,6 +213,10 @@ static struct gl_renderer_interface *gl_renderer;
+ 
+ static const char default_seat[] = "seat0";
+ 
++#if defined(HAVE_TEGRA)
++static int drm_tegra_import(int fd, uint32_t handle);
++#endif /* defined(HAVE_TEGRA) */
++
+ static void
+ drm_output_set_cursor(struct drm_output *output);
+ 
+@@ -253,6 +262,9 @@ drm_fb_create_dumb(struct drm_compositor *ec, unsigned width, unsigned height)
+ 	struct drm_mode_create_dumb create_arg;
+ 	struct drm_mode_destroy_dumb destroy_arg;
+ 	struct drm_mode_map_dumb map_arg;
++#if defined(HAVE_TEGRA)
++	int fd;
++#endif /* defined(HAVE_TEGRA) */
+ 
+ 	fb = zalloc(sizeof *fb);
+ 	if (!fb)
+@@ -272,6 +284,29 @@ drm_fb_create_dumb(struct drm_compositor *ec, unsigned width, unsigned height)
+ 	fb->size = create_arg.size;
+ 	fb->fd = ec->drm.fd;
+ 
++#if defined(HAVE_TEGRA)
++	ret = drmPrimeHandleToFD(ec->gbm_fd, fb->handle, 0, &fd);
++	if (ret) {
++		weston_log("failed to export bo: %m\n");
++		goto err_bo;
++	}
++
++	ret = drmPrimeFDToHandle(ec->drm.fd, fd, &fb->handle);
++	if (ret) {
++		weston_log("failed to import bo: %m\n");
++		close(fd);
++		goto err_bo;
++	}
++
++	close(fd);
++
++	ret = drm_tegra_import(ec->drm.fd, fb->handle);
++	if (ret) {
++		weston_log("failed to import handle: %s\n", strerror(-ret));
++		goto err_bo;
++	}
++#endif /* defined(HAVE_TEGRA) */
++
+ 	ret = drmModeAddFB(ec->drm.fd, width, height, 24, 32,
+ 			   fb->stride, fb->handle, &fb->fb_id);
+ 	if (ret)
+@@ -331,6 +366,9 @@ drm_fb_get_from_bo(struct gbm_bo *bo,
+ 	uint32_t width, height;
+ 	uint32_t handles[4], pitches[4], offsets[4];
+ 	int ret;
++#if defined(HAVE_TEGRA)
++	int fd;
++#endif /* defined(HAVE_TEGRA) */
+ 
+ 	if (fb)
+ 		return fb;
+@@ -357,6 +395,29 @@ drm_fb_get_from_bo(struct gbm_bo *bo,
+ 
+ 	ret = -1;
+ 
++#if defined(HAVE_TEGRA)
++	ret = drmPrimeHandleToFD(compositor->gbm_fd, fb->handle, 0, &fd);
++	if (ret) {
++		weston_log("failed to export bo: %m\n");
++		goto err_free;
++	}
++
++	ret = drmPrimeFDToHandle(compositor->drm.fd, fd, &fb->handle);
++	if (ret) {
++		weston_log("failed to import bo: %m\n");
++		close(fd);
++		goto err_free;
++	}
++
++	close(fd);
++
++	ret = drm_tegra_import(compositor->drm.fd, fb->handle);
++	if (ret) {
++		weston_log("failed to import handle: %s\n", strerror(-ret));
++		goto err_free;
++	}
++#endif /* defined(HAVE_TEGRA) */
++
+ 	if (format && !compositor->no_addfb2) {
+ 		handles[0] = fb->handle;
+ 		pitches[0] = fb->stride;
+@@ -1307,6 +1368,8 @@ create_gbm_device(int fd)
+ {
+ 	struct gbm_device *gbm;
+ 
++	printf("[DBG] %s(%d): fd=%d\n", __func__, __LINE__, fd);
++
+ 	gl_renderer = weston_load_module("gl-renderer.so",
+ 					 "gl_renderer_interface");
+ 	if (!gl_renderer)
+@@ -1341,7 +1404,13 @@ drm_compositor_create_gl_renderer(struct drm_compositor *ec)
+ static int
+ init_egl(struct drm_compositor *ec)
+ {
+-	ec->gbm = create_gbm_device(ec->drm.fd);
++	ec->gbm_fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
++	if (ec->gbm_fd < 0)
++		return -1;
++
++	printf("[DBG] %s(%d): drm.fd=%d gbm_fd=%d\n", __func__, __LINE__, ec->drm.fd, ec->gbm_fd);
++
++	ec->gbm = create_gbm_device(ec->gbm_fd);
+ 
+ 	if (!ec->gbm)
+ 		return -1;
+@@ -2893,6 +2962,28 @@ err_base:
+ 	return NULL;
+ }
+ 
++#if defined(HAVE_TEGRA)
++static int
++drm_tegra_import(int fd, uint32_t handle)
++{
++	struct drm_tegra_gem_set_tiling args;
++	int err;
++
++	memset(&args, 0, sizeof(args));
++	args.handle = handle;
++	args.mode = DRM_TEGRA_GEM_TILING_MODE_BLOCK;
++	args.value = 4;
++
++	err = ioctl(fd, DRM_IOCTL_TEGRA_GEM_SET_TILING, &args);
++	if (err < 0) {
++		err = -errno;
++		weston_log("failed to set tiling parameters: %m\n");
++	}
++
++	return err;
++}
++#endif /* defined(HAVE_TEGRA) */
++
+ WL_EXPORT struct weston_compositor *
+ backend_init(struct wl_display *display, int *argc, char *argv[],
+ 	     struct weston_config *config)
