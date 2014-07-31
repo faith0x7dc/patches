@@ -1,0 +1,54 @@
+diff --git packaging/libdrm.spec packaging/libdrm.spec
+index 89589ad..4ea2936 100644
+--- packaging/libdrm.spec
++++ packaging/libdrm.spec
+@@ -1,6 +1,8 @@
++%bcond_with tegra
++
+ Name:           libdrm
+-Version:        2.4.52
+-Release:        4
++Version:        2.4.54
++Release:        0.z0.0
+ License:        MIT
+ Url:            http://cgit.freedesktop.org/mesa/drm
+ Summary:        Userspace interface to kernel DRM services
+@@ -50,9 +52,13 @@ cp %{SOURCE1001} .
+         --enable-static=yes  \
+         --enable-udev \
+         --enable-libkms \
+-        --disable-nouveau-experimental-api \
+         --disable-radeon \
++%if %{with tegra}
++        --enable-nouveau \
++        --enable-tegra-experimental-api \
++%else
+         --disable-nouveau \
++%endif
+         --enable-exynos-experimental-api
+ 
+ make %{?_smp_mflags}
+@@ -77,7 +83,10 @@ make %{?_smp_mflags}
+ %manifest %{name}.manifest
+ %{_libdir}/libdrm.so.*
+ %{_libdir}/libdrm_exynos.so.*
+-%{_libdir}/libdrm_vigs.so.*
++%if %{with tegra}
++%{_libdir}/libdrm_nouveau.so.*
++%{_libdir}/libdrm_tegra.so.*
++%endif
+ 
+ %files devel
+ %manifest %{name}.manifest
+@@ -94,7 +103,10 @@ make %{?_smp_mflags}
+ %endif
+ %{_libdir}/libkms.so
+ %{_libdir}/libdrm_exynos.so
+-%{_libdir}/libdrm_vigs.so
++%if %{with tegra}
++%{_libdir}/libdrm_nouveau.so
++%{_libdir}/libdrm_tegra.so
++%endif
+ %{_libdir}/pkgconfig/*
+ 
+ 
