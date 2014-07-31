@@ -1,0 +1,59 @@
+diff --git packaging/mesa.spec packaging/mesa.spec
+index c3dd641..1bf5c48 100644
+--- packaging/mesa.spec
++++ packaging/mesa.spec
+@@ -1,9 +1,11 @@
+ %define glamor 1
++%define _unpackaged_files_terminate_build 0
+ %bcond_with wayland
++%bcond_with tegra
+ 
+ Name:           mesa
+-Version:        10.1.3
+-Release:        0
++Version:        10.3.0
++Release:        0.z0.0
+ License:        MIT
+ Summary:        System for rendering interactive 3-D graphics
+ Url:            http://www.mesa3d.org
+@@ -26,6 +28,7 @@ BuildRequires:  libxml2-python
+ BuildRequires:  llvm-devel
+ BuildRequires:  pkgconfig
+ BuildRequires:  python
++BuildRequires:  python-xml
+ BuildRequires:  pkgconfig(expat)
+ BuildRequires:  pkgconfig(libdrm) >= 2.4.24
+ %ifarch x86_64 %ix86
+@@ -197,7 +200,7 @@ applications using the OpenGL|ES 3.x APIs.
+ %package -n libgbm
+ # as per gbm.pc
+ Version:        0.0.0
+-Release:        0
++Release:        1.1.z0.0
+ Summary:        Generic buffer management API
+ 
+ %description -n libgbm
+@@ -210,7 +213,7 @@ openwfd.
+ 
+ %package -n libgbm-devel
+ Version:        0.0.0
+-Release:        0
++Release:        1.1.z0.0
+ Summary:        Development files for the EGL API
+ Requires:       libgbm = %{version}
+ 
+@@ -263,9 +266,14 @@ autoreconf -fi
+            --with-gallium-drivers="i915,svga,swrast" \
+ %endif
+ %ifarch %arm
++%if %{with tegra}
++           --with-dri-drivers=nouveau \
++           --with-gallium-drivers="nouveau" \
++%else
+            --with-dri-drivers=swrast \
+            --with-gallium-drivers="" \
+ %endif
++%endif
+            CFLAGS="%{optflags} -DNDEBUG"
+ make %{?_smp_mflags}
+ %make_install
